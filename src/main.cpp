@@ -1,3 +1,5 @@
+#include <Servo.h> // Include the Servo library
+
 // --- Motor Driver 1 (Controls Motor A and Motor B) ---
 // Motor A connections
 int enA = 9;
@@ -21,11 +23,16 @@ int in7 = 2;
 int in8 = 13;  // Using another dedicated digital pin
 
 // --- MQ Gas Sensor Pins ---
-// Arduino Mega has many analog pins (A0-A15), making this straightforward.
 int mq1Pin = A0; // Connect MQ1 analog output to Arduino Analog Pin A0
 int mq2Pin = A1; // Connect MQ2 analog output to Arduino Analog Pin A1
 int mq3Pin = A2; // Connect MQ3 analog output to Arduino Analog Pin A2
 int mq4Pin = A3; // Connect MQ4 analog output to Arduino Analog Pin A3
+
+// --- Servo Motor Setup ---
+Servo myServo;      // Create a servo object
+int servoPin = 44;  // Choose a digital pin for the servo motor (Mega has many!)
+int servoGasDetectedPos = 90; // Angle for servo when gas is detected (e.g., 90 degrees)
+int servoNoGasPos = 0;      // Angle for servo when no gas (e.g., 0 degrees)
 
 int motorSpeed = 150; // A good starting speed (0-255). Adjust as needed.
 
@@ -35,7 +42,7 @@ int motorSpeed = 150; // A good starting speed (0-255). Adjust as needed.
 int mq1Threshold = 400; // For MQ1 (controls Motor A)
 int mq2Threshold = 400; // For MQ2 (controls Motor B)
 int mq3Threshold = 400; // For MQ3 (controls Motor C)
-int mq4Threshold = 400; // For MQ4 (controls Motor D)
+int mq4Threshold = 400; // For MQ4 (controls Motor D and Servo)
 
 void setup() {
   // --- Set all motor control pins as outputs ---
@@ -61,8 +68,12 @@ void setup() {
   stopMotorC();
   stopMotorD();
 
+  // --- Servo Setup ---
+  myServo.attach(servoPin); // Attach the servo object to the servo pin
+  myServo.write(servoNoGasPos); // Initialize servo to the "no gas" position
+
   Serial.begin(9600); // For debugging
-  Serial.println("4 Motor and 4 MQ Sensor control initialized on Arduino Mega.");
+  Serial.println("4 Motor, 4 MQ Sensor, and Servo control initialized on Arduino Mega.");
 }
 
 void loop() {
@@ -102,19 +113,21 @@ void loop() {
     backwardMotorC();
   }
 
-  // --- MQ4 Sensor and Motor D Control ---
+  // --- MQ4 Sensor, Motor D, AND Servo Control ---
   int mq4SensorValue = analogRead(mq4Pin);
-  Serial.print("MQ4 Sensor Value (for Motor D): ");
+  Serial.print("MQ4 Sensor Value (for Motor D and Servo): ");
   Serial.println(mq4SensorValue);
   if (mq4SensorValue > mq4Threshold) {
-    Serial.println("MQ4: Gas detected! Motor D Forward.");
+    Serial.println("MQ4: Gas detected! Motor D Forward & Servo to Gas Detected Pos.");
     forwardMotorD();
+    myServo.write(servoGasDetectedPos); // Move servo to gas detected position
   } else {
-    Serial.println("MQ4: Gas level low. Motor D Backward.");
+    Serial.println("MQ4: Gas level low. Motor D Backward & Servo to No Gas Pos.");
     backwardMotorD();
+    myServo.write(servoNoGasPos);      // Move servo back to no gas position
   }
 
-  delay(500); // Small delay to avoid rapid motor changes and allow sensors to stabilize
+  delay(500); // Small delay to avoid rapid motor/servo changes and allow sensors to stabilize
 }
 
 // --- Individual Motor Control Functions (Motor A, B, C, D) ---
