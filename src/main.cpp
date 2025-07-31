@@ -1,6 +1,8 @@
-#include <Servo.h>        // Include the Servo library
-#include <DHT.h>          // Include the DHT sensor library by Adafruit
+#include <Servo.h>         // Include the Servo library
+#include <DHT.h>           // Include the DHT sensor library by Adafruit
 #include <Adafruit_Sensor.h> // Required for DHT sensor library
+#include <Wire.h>          // Required for I2C communication
+#include <LiquidCrystal_I2C.h> // Include the LiquidCrystal_I2C library
 
 // --- Motor Driver 1 (Controls Motor A and Motor B) ---
 // Motor A connections
@@ -37,22 +39,35 @@ int servoGasDetectedPos = 90; // Angle for servo when gas is detected (e.g., 90 
 int servoNoGasPos = 0;      // Angle for servo when no gas (e.g., 0 degrees)
 
 // --- DHT11 Sensor Setup ---
-#define DHTPIN 48     // Digital pin connected to the DHT sensor data pin (e.g., D46 on Mega)
+#define DHTPIN 46     // Digital pin connected to the DHT sensor data pin (e.g., D46 on Mega)
 #define DHTTYPE DHT11   // DHT 11 (Other options: DHT22, DHT21)
 DHT dht(DHTPIN, DHTTYPE); // Initialize DHT sensor object
+
+// --- LCD I2C Setup ---
+LiquidCrystal_I2C lcd(0x27, 20, 4); // Assuming a 20x4 LCD at address 0x27 (adjust as needed)
+
+// --- Bluetooth HC-05 Setup ---
+// Using Hardware Serial1 on Arduino Mega
+// HC-05 TXD (transmit) -> Arduino Mega RX1 (Pin 19)
+// HC-05 RXD (receive)  -> Arduino Mega TX1 (Pin 18)
+const long bluetoothBaudRate = 9600; // Common baud rate for HC-05. Change to 38400 if needed.
 
 int motorSpeed = 150; // A good starting speed (0-255). Adjust as needed.
 
 // --- Thresholds for each MQ sensor ---
-// *** IMPORTANT: Calibrate these values for your specific sensors and environment ***
-// These values are typically 0-1023 for analogRead.
 int mq1Threshold = 400; // For MQ1 (controls Motor A)
 int mq2Threshold = 400; // For MQ2 (controls Motor B)
 int mq3Threshold = 400; // For MQ3 (controls Motor C)
 int mq4Threshold = 400; // For MQ4 (controls Motor D and Servo)
 
+// --- GLOBAL VARIABLES for DHT readings ---
+float dhtHumidity = NAN;
+float dhtTemperature = NAN;
+
 unsigned long lastDHTReadTime = 0;
 const long dhtReadInterval = 2000; // Read DHT11 every 2 seconds (min interval for DHT11)
+unsigned long lastDisplayUpdateTime = 0;
+const long displayUpdateInterval = 500; // Update LCD every 0.5 seconds for responsiveness
 
 void setup() {
   // --- Set all motor control pins as outputs ---
@@ -85,90 +100,135 @@ void setup() {
   // --- DHT Sensor Setup ---
   dht.begin(); // Start the DHT sensor
 
-  Serial.begin(9600); // For debugging
-  Serial.println("System Initialized: 4 Motors, 4 MQ Sensors, Servo, and DHT11 on Arduino Mega.");
+  // --- LCD Setup ---
+  lcd.init();      // Initialize the LCD
+  lcd.backlight(); // Turn on the backlight
+  lcd.print("System Booting...");
+  lcd.setCursor(0, 1);
+  lcd.print("Loading Sensors...");
+  delay(2000); // Give time to read messages
+
+  // --- Serial (USB) Setup (for initial setup messages and backup debugging) ---
+  Serial.begin(9600);
+  Serial.println("System Initialized.");
+
+  // --- Bluetooth (HC-05) Setup ---
+  Serial1.begin(bluetoothBaudRate); // Initialize Serial1 for HC-05
+  Serial.print("Bluetooth (HC-05) Initialized on Serial1 @ ");
+  Serial.print(bluetoothBaudRate);
+  Serial.println(" bps");
+  Serial1.println("Bluetooth connected!"); // Send a test message
 }
 
 void loop() {
-  // --- DHT11 Temperature and Humidity Reading ---
   unsigned long currentMillis = millis();
+
+  // --- DHT11 Temperature and Humidity Reading (update global variables) ---
   if (currentMillis - lastDHTReadTime >= dhtReadInterval) {
     lastDHTReadTime = currentMillis;
 
-    float h = dht.readHumidity();
-    float t = dht.readTemperature(); // Reads temperature in Celsius (default)
-    // float f = dht.readTemperature(true); // Reads temperature in Fahrenheit
+    dhtHumidity = dht.readHumidity();
+    dhtTemperature = dht.readTemperature(); // Reads temperature in Celsius (default)
 
-    // Check if any reads failed and exit early (to try again next loop)
-    if (isnan(h) || isnan(t)) {
-      Serial.println(F("Failed to read from DHT sensor!"));
-    } else {
-      Serial.print(F("Humidity: "));
-      Serial.print(h);
-      Serial.print(F(" %\t"));
-      Serial.print(F("Temperature: "));
-      Serial.print(t);
-      Serial.println(F(" *C"));
-      // Serial.print(F("/"));
-      // Serial.print(f);
-      // Serial.println(F(" *F"));
+    if (isnan(dhtHumidity) || isnan(dhtTemperature)) {
+      // It's good to know if DHT fails, so we can keep a commented Serial.println for a quick test
+      // Serial.println(F("Failed to read from DHT sensor!"));
     }
   }
 
-  // --- MQ1 Sensor and Motor A Control ---
+  // --- MQ Gas Sensor Readings ---
   int mq1SensorValue = analogRead(mq1Pin);
-  Serial.print("MQ1 Sensor Value (for Motor A): ");
-  Serial.println(mq1SensorValue);
+  int mq2SensorValue = analogRead(mq2Pin);
+  int mq3SensorValue = analogRead(mq3Pin);
+  int mq4SensorValue = analogRead(mq4Pin);
+
+  // --- Motor Control Logic (remains unchanged) ---
   if (mq1SensorValue > mq1Threshold) {
-    Serial.println("MQ1: Gas detected! Motor A Forward.");
     forwardMotorA();
   } else {
-    Serial.println("MQ1: Gas level low. Motor A Backward.");
     backwardMotorA();
   }
 
-  // --- MQ2 Sensor and Motor B Control ---
-  int mq2SensorValue = analogRead(mq2Pin);
-  Serial.print("MQ2 Sensor Value (for Motor B): ");
-  Serial.println(mq2SensorValue);
   if (mq2SensorValue > mq2Threshold) {
-    Serial.println("MQ2: Gas detected! Motor B Forward.");
     forwardMotorB();
   } else {
-    Serial.println("MQ2: Gas level low. Motor B Backward.");
     backwardMotorB();
   }
 
-  // --- MQ3 Sensor and Motor C Control ---
-  int mq3SensorValue = analogRead(mq3Pin);
-  Serial.print("MQ3 Sensor Value (for Motor C): ");
-  Serial.println(mq3SensorValue);
   if (mq3SensorValue > mq3Threshold) {
-    Serial.println("MQ3: Gas detected! Motor C Forward.");
     forwardMotorC();
   } else {
-    Serial.println("MQ3: Gas level low. Motor C Backward.");
     backwardMotorC();
   }
 
   // --- MQ4 Sensor, Motor D, AND Servo Control ---
-  int mq4SensorValue = analogRead(mq4Pin);
-  Serial.print("MQ4 Sensor Value (for Motor D and Servo): ");
-  Serial.println(mq4SensorValue);
   if (mq4SensorValue > mq4Threshold) {
-    Serial.println("MQ4: Gas detected! Motor D Forward & Servo to Gas Detected Pos.");
     forwardMotorD();
     myServo.write(servoGasDetectedPos); // Move servo to gas detected position
   } else {
-    Serial.println("MQ4: Gas level low. Motor D Backward & Servo to No Gas Pos.");
     backwardMotorD();
     myServo.write(servoNoGasPos);      // Move servo back to no gas position
   }
 
-  // Small delay for the overall loop. This should be minimal to allow for quick sensor reads,
-  // but long enough to prevent rapid-fire serial prints or motor/servo oscillations.
-  // The DHT read has its own interval to prevent blocking.
-  delay(100);
+  // --- Prepare Data String for Serial Monitor and Bluetooth ---
+  // Using a String object to build the output. Be mindful of memory usage in long-running apps.
+  // For this kind of small, repeated string, it's generally fine on a Mega.
+  String dataString = "";
+  dataString += "Temp: ";
+  if (!isnan(dhtTemperature)) dataString += String(dhtTemperature, 1); else dataString += "--";
+  dataString += "C | Hum: ";
+  if (!isnan(dhtHumidity)) dataString += String(dhtHumidity, 1); else dataString += "--";
+  dataString += "% | MQ1: ";
+  dataString += String(mq1SensorValue);
+  dataString += " | MQ2: ";
+  dataString += String(mq2SensorValue);
+  dataString += " | MQ3: ";
+  dataString += String(mq3SensorValue);
+  dataString += " | MQ4: ";
+  dataString += String(mq4SensorValue);
+
+  // --- Display on Serial Monitor (USB) ---
+  Serial.println(dataString);
+
+  // --- Send Data via Bluetooth (HC-05) ---
+  // Ensure the app can parse this exact string format
+  Serial1.println(dataString);
+
+
+  // --- LCD Display Update ---
+  if (currentMillis - lastDisplayUpdateTime >= displayUpdateInterval) {
+    lastDisplayUpdateTime = currentMillis;
+
+    lcd.clear(); // Clear the display before writing new data
+
+    // Line 1: Temperature and Humidity
+    lcd.setCursor(0, 0);
+    lcd.print("Temp:");
+    if (isnan(dhtTemperature)) lcd.print("--"); else lcd.print(dhtTemperature, 1);
+    lcd.print("C Hum:");
+    if (isnan(dhtHumidity)) lcd.print("--"); else lcd.print(dhtHumidity, 1);
+    lcd.print("%");
+
+    // Line 2: MQ1 and MQ2
+    lcd.setCursor(0, 1);
+    lcd.print("MQ1:");
+    lcd.print(mq1SensorValue);
+    lcd.print(" MQ2:");
+    lcd.print(mq2SensorValue);
+
+    // Line 3: MQ3 and MQ4
+    lcd.setCursor(0, 2);
+    lcd.print("MQ3:");
+    lcd.print(mq3SensorValue);
+    lcd.print(" MQ4:");
+    lcd.print(mq4SensorValue);
+
+    // Optional Line 4: System Status / Motor States
+    lcd.setCursor(0, 3);
+    lcd.print("System Ready");
+  }
+
+  delay(50); // Small delay for the overall loop
 }
 
 // --- Individual Motor Control Functions (Motor A, B, C, D) ---
@@ -245,9 +305,5 @@ void stopMotorD() {
 void setMotorSpeed(int newSpeed) {
   if (newSpeed >= 0 && newSpeed <= 255) {
     motorSpeed = newSpeed;
-    Serial.print("Motor speed set to: ");
-    Serial.println(motorSpeed);
-  } else {
-    Serial.println("Invalid speed. Speed must be between 0 and 255.");
   }
 }
